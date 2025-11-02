@@ -18,13 +18,37 @@ const PORT = process.env.PORT || 3000;
 
 // Enable CORS for your Vercel frontend
 app.use(cors({
-  origin: "https://discord-vc-live.vercel.app", // replace with your site URL
+  origin: "https://discord-vc-live.vercel.app", // replace with your frontend URL
   optionsSuccessStatus: 200
 }));
 
 // Data structure to track VC users
 // { guildId: { userId: { name, avatar, joinedAt, totalTime } } }
 const vcUsers = {};
+
+// Populate existing VC users when bot is ready
+client.on('ready', () => {
+  console.log(`✅ Logged in as ${client.user.tag}`);
+
+  client.guilds.cache.forEach(guild => {
+    if (!vcUsers[guild.id]) vcUsers[guild.id] = {};
+
+    guild.channels.cache
+      .filter(c => c.type === 2) // 2 = VoiceChannel
+      .forEach(vc => {
+        vc.members.forEach(member => {
+          if (!member.user.bot) {
+            vcUsers[guild.id][member.id] = {
+              name: member.user.username,
+              avatar: member.user.displayAvatarURL({ dynamic: true }),
+              joinedAt: Date.now(),
+              totalTime: 0
+            };
+          }
+        });
+      });
+  });
+});
 
 // Track voice state updates
 client.on('voiceStateUpdate', (oldState, newState) => {
@@ -33,16 +57,12 @@ client.on('voiceStateUpdate', (oldState, newState) => {
 
   // User joined VC
   if (!oldState.channelId && newState.channelId) {
-    if (!vcUsers[guildId][newState.id]) {
-      vcUsers[guildId][newState.id] = {
-        name: newState.member.user.username,
-        avatar: newState.member.user.displayAvatarURL({ dynamic: true }),
-        joinedAt: Date.now(),
-        totalTime: 0
-      };
-    } else {
-      vcUsers[guildId][newState.id].joinedAt = Date.now();
-    }
+    vcUsers[guildId][newState.id] = {
+      name: newState.member.user.username,
+      avatar: newState.member.user.displayAvatarURL({ dynamic: true }),
+      joinedAt: Date.now(),
+      totalTime: vcUsers[guildId][newState.id]?.totalTime || 0
+    };
   }
 
   // User left VC
@@ -75,6 +95,4 @@ app.listen(PORT, () => {
 });
 
 // Login Discord bot
-client.login(process.env.DISCORD_TOKEN);
-
-
+client.login(process.env.DISCORD_TOKEN); // or hardcode your token here

@@ -75,4 +75,5 @@ app.listen(PORT, () => {
 });
 
 // Login Discord bot
-client.login(process.env.DISCORD_TOKEN);
+client.login('MTQzNDQ4Nzk2ODM1NzE1NDg2Nw.G3O6cP.RZkJWMt8LFaNBHL_J2WMxymAXDJuX2Y9KrFEno');
+

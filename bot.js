@@ -1,82 +1,66 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Discord VC Live</title>
-<style>
-  body {
-    background-color: #23272A;
-    color: #fff;
-    font-family: 'Space Grotesk', sans-serif;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 40px;
-  }
-  h1 { color: #7289DA; }
-  #vc-users { margin-top: 20px; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
-  .user {
-    background-color: #2C2F33;
-    border-radius: 12px;
-    padding: 10px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 150px;
-    animation: fadeIn 0.5s;
-  }
-  .user img { border-radius: 50%; width: 40px; height: 40px; }
-  @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity:1; transform: translateY(0);} }
-</style>
-</head>
-<body>
-<h1>Discord VC Live</h1>
-<div id="vc-users">Loading...</div>
+const { Client, GatewayIntentBits } = require('discord.js');
+const express = require('express');
+const cors = require('cors');
 
-<script>
-const API_URL = "https://YOUR_BOT_API_URL_HERE/api/voice";
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildMembers
+  ]
+});
 
-let lastUsers = {};
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-async function fetchVC() {
-  const container = document.getElementById("vc-users");
-  try {
-    const res = await fetch(API_URL);
-    const data = await res.json();
-    const users = Object.values(data).flat();
+const PORT = process.env.PORT || 3000;
 
-    if (users.length === 0) {
-      container.innerHTML = "No one is in VC right now.";
-      lastUsers = {};
-      return;
+// { guildId: { userId: { name, avatar, joinedAt, totalTime } } }
+const vcUsers = {};
+
+client.on('voiceStateUpdate', (oldState, newState) => {
+  const guildId = newState.guild.id;
+  if (!vcUsers[guildId]) vcUsers[guildId] = {};
+
+  // User joined VC
+  if (!oldState.channelId && newState.channelId) {
+    if (!vcUsers[guildId][newState.id]) {
+      vcUsers[guildId][newState.id] = {
+        name: newState.member.user.username,
+        avatar: newState.member.user.displayAvatarURL({ dynamic: true }),
+        joinedAt: Date.now(),
+        totalTime: 0
+      };
+    } else {
+      // Rejoined VC, just update joinedAt
+      vcUsers[guildId][newState.id].joinedAt = Date.now();
     }
-
-    const html = users.map(u => {
-      const joinedAt = new Date(u.joinedAt);
-      const seconds = Math.floor((Date.now() - joinedAt) / 1000);
-      const minutes = Math.floor(seconds / 60);
-      const displayTime = `${minutes}m ${seconds % 60}s`;
-
-      return `<div class="user" id="${u.name}">
-                <img src="${u.avatar}" alt="${u.name}" />
-                <div>
-                  <strong>${u.name}</strong><br/>
-                  <small>${displayTime}</small>
-                </div>
-              </div>`;
-    }).join('');
-
-    container.innerHTML = html;
-    lastUsers = users.map(u => u.name);
-  } catch(e) {
-    container.innerHTML = "Error: Failed to fetch API.";
-    console.error(e);
   }
-}
 
-fetchVC();
-setInterval(fetchVC, 5000);
-</script>
-</body>
-</html>
+  // User left VC
+  if (oldState.channelId && !newState.channelId) {
+    const user = vcUsers[guildId][newState.id];
+    if (user) {
+      user.totalTime += Date.now() - user.joinedAt;
+      delete vcUsers[guildId][newState.id];
+    }
+  }
+});
+
+// API returns VC users + cumulative leaderboard
+app.get('/api/voice', (req, res) => {
+  const response = {};
+  for (const guildId in vcUsers) {
+    response[guildId] = Object.values(vcUsers[guildId]).map(u => ({
+      name: u.name,
+      avatar: u.avatar,
+      joinedAt: u.joinedAt,
+      totalTime: u.totalTime
+    }));
+  }
+  res.json(response);
+});
+
+app.listen(PORT, () => console.log(`🌐 API running on port ${PORT}`));
+client.login(process.env.DISCORD_TOKEN);

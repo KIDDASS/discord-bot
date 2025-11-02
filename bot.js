@@ -1,9 +1,10 @@
 // =======================
-// Discord VC Live Bot API
+// Discord VC Live Bot API (MongoDB Version)
 // =======================
 const { Client, GatewayIntentBits } = require('discord.js');
 const express = require('express');
 const cors = require('cors');
+const mongoose = require('mongoose');
 
 const client = new Client({
   intents: [
@@ -16,83 +17,98 @@ const client = new Client({
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Enable CORS for your Vercel frontend
+// =======================
+// MongoDB Connection
+// =======================
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+  .then(() => console.log("✅ Connected to MongoDB"))
+  .catch(err => console.error("❌ MongoDB connection error:", err));
+
+const userSchema = new mongoose.Schema({
+  guildId: String,
+  userId: String,
+  name: String,
+  avatar: String,
+  totalTime: Number,
+  joinedAt: Number
+});
+
+const VCUser = mongoose.model("VCUser", userSchema);
+
+// =======================
+// Express + CORS
+// =======================
 app.use(cors({
-  origin: "https://discord-vc-live.vercel.app", // replace with your frontend URL
+  origin: "https://discord-vc-live.vercel.app", // your frontend URL
   optionsSuccessStatus: 200
 }));
 
-// Data structure to track VC users
-// { guildId: { userId: { name, avatar, joinedAt, totalTime } } }
-const vcUsers = {};
-
-// Populate existing VC users when bot is ready
-client.on('ready', () => {
+// =======================
+// Discord Bot Events
+// =======================
+client.on("ready", () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
-
-  client.guilds.cache.forEach(guild => {
-    if (!vcUsers[guild.id]) vcUsers[guild.id] = {};
-
-    guild.channels.cache
-      .filter(c => c.type === 2) // 2 = VoiceChannel
-      .forEach(vc => {
-        vc.members.forEach(member => {
-          if (!member.user.bot) {
-            vcUsers[guild.id][member.id] = {
-              name: member.user.username,
-              avatar: member.user.displayAvatarURL({ dynamic: true }),
-              joinedAt: Date.now(),
-              totalTime: 0
-            };
-          }
-        });
-      });
-  });
 });
 
-// Track voice state updates
-client.on('voiceStateUpdate', (oldState, newState) => {
+client.on("voiceStateUpdate", async (oldState, newState) => {
   const guildId = newState.guild.id;
-  if (!vcUsers[guildId]) vcUsers[guildId] = {};
+  const userId = newState.id;
 
-  // User joined VC
+  // User joins VC
   if (!oldState.channelId && newState.channelId) {
-    vcUsers[guildId][newState.id] = {
-      name: newState.member.user.username,
-      avatar: newState.member.user.displayAvatarURL({ dynamic: true }),
-      joinedAt: Date.now(),
-      totalTime: vcUsers[guildId][newState.id]?.totalTime || 0
-    };
+    const existing = await VCUser.findOne({ guildId, userId });
+    if (existing) {
+      existing.joinedAt = Date.now();
+      await existing.save();
+    } else {
+      await VCUser.create({
+        guildId,
+        userId,
+        name: newState.member.user.username,
+        avatar: newState.member.user.displayAvatarURL({ dynamic: true }),
+        totalTime: 0,
+        joinedAt: Date.now()
+      });
+    }
   }
 
-  // User left VC
+  // User leaves VC
   if (oldState.channelId && !newState.channelId) {
-    const user = vcUsers[guildId][newState.id];
-    if (user) {
+    const user = await VCUser.findOne({ guildId, userId });
+    if (user && user.joinedAt) {
       user.totalTime += Date.now() - user.joinedAt;
-      delete vcUsers[guildId][newState.id];
+      user.joinedAt = null;
+      await user.save();
     }
   }
 });
 
-// API endpoint
-app.get('/api/voice', (req, res) => {
+// =======================
+// API Endpoint
+// =======================
+app.get("/api/voice", async (req, res) => {
+  const users = await VCUser.find();
   const response = {};
-  for (const guildId in vcUsers) {
-    response[guildId] = Object.values(vcUsers[guildId]).map(u => ({
-      name: u.name,
-      avatar: u.avatar,
-      joinedAt: u.joinedAt,
-      totalTime: u.totalTime
-    }));
+
+  for (const user of users) {
+    if (!response[user.guildId]) response[user.guildId] = [];
+    response[user.guildId].push({
+      name: user.name,
+      avatar: user.avatar,
+      totalTime: user.totalTime,
+      joinedAt: user.joinedAt
+    });
   }
+
   res.json(response);
 });
 
-// Start Express server
-app.listen(PORT, () => {
-  console.log(`🌐 API running on port ${PORT}`);
-});
+// =======================
+// Start API + Login Bot
+// =======================
+app.listen(PORT, () => console.log(`🌐 API running on port ${PORT}`));
 
-// Login Discord bot
-client.login(process.env.DISCORD_TOKEN); // or hardcode your token here
+client.login(process.env.DISCORD_TOKEN);

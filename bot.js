@@ -1,3 +1,6 @@
+// =======================
+// Discord VC Live Bot API
+// =======================
 const { Client, GatewayIntentBits } = require('discord.js');
 const express = require('express');
 const cors = require('cors');
@@ -11,14 +14,19 @@ const client = new Client({
 });
 
 const app = express();
-app.use(cors());
-app.use(express.json());
-
 const PORT = process.env.PORT || 3000;
 
+// Enable CORS for your Vercel frontend
+app.use(cors({
+  origin: "https://discord-vc-live.vercel.app", // replace with your site URL
+  optionsSuccessStatus: 200
+}));
+
+// Data structure to track VC users
 // { guildId: { userId: { name, avatar, joinedAt, totalTime } } }
 const vcUsers = {};
 
+// Track voice state updates
 client.on('voiceStateUpdate', (oldState, newState) => {
   const guildId = newState.guild.id;
   if (!vcUsers[guildId]) vcUsers[guildId] = {};
@@ -33,7 +41,6 @@ client.on('voiceStateUpdate', (oldState, newState) => {
         totalTime: 0
       };
     } else {
-      // Rejoined VC, just update joinedAt
       vcUsers[guildId][newState.id].joinedAt = Date.now();
     }
   }
@@ -48,7 +55,7 @@ client.on('voiceStateUpdate', (oldState, newState) => {
   }
 });
 
-// API returns VC users + cumulative leaderboard
+// API endpoint
 app.get('/api/voice', (req, res) => {
   const response = {};
   for (const guildId in vcUsers) {
@@ -62,5 +69,10 @@ app.get('/api/voice', (req, res) => {
   res.json(response);
 });
 
-app.listen(PORT, () => console.log(`🌐 API running on port ${PORT}`));
+// Start Express server
+app.listen(PORT, () => {
+  console.log(`🌐 API running on port ${PORT}`);
+});
+
+// Login Discord bot
 client.login(process.env.DISCORD_TOKEN);
